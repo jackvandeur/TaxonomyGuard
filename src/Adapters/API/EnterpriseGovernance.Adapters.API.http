@@ -1,0 +1,6 @@
+@EnterpriseGovernance.Adapters.API_HostAddress = http://localhost:5195
+
+GET {{EnterpriseGovernance.Adapters.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
