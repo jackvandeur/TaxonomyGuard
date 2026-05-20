@@ -1,0 +1,15 @@
+# .NET Build mappen
+[Bb]in/
+[Oo]bj/
+
+# SQLite Database bestanden
+*.db
+*.db-shm
+*.db-wal
+
+# Gebruikersspecifieke bestanden (IDE)
+*.user
+
+# Lokale configuratiebestanden (voorkomt per ongeluk committen van secrets)
+appsettings.Development.json
+appsettings.local.json
