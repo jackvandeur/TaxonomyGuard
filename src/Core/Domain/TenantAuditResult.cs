@@ -11,9 +11,14 @@ public class TenantAuditResult
     // Berekeningen op basis van de geïndexeerde data
     public int TotalCustomContentTypes => DetectedContentTypes.Count(ct => ct.IsCustom);
 
-    public int FieldsWithNamingDrift =>
-        DetectedGlobalFields.Count(f => f.HasNamingDrift) +
-        DetectedContentTypes.SelectMany(ct => ct.Fields).Count(f => f.HasNamingDrift);
+    public int FieldsWithNamingDrift => GetFieldsWithNamingDrift().Count;
+
+    public List<FieldDefinition> GetFieldsWithNamingDrift()
+    {
+        return DetectedGlobalFields.Where(f => f.HasNamingDrift)
+            .Concat(DetectedContentTypes.SelectMany(ct => ct.Fields).Where(f => f.HasNamingDrift))
+            .ToList();
+    }
 
     public double HygieneScore
     {

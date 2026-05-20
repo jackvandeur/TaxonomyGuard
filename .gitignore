@@ -1,15 +1,23 @@
-# .NET Build mappen
-[Bb]in/
-[Oo]bj/
+# --- .NET Binaries & Build Output ---
+/[Bb]in/
+/[Oo]bj/
+src/**/[Bb]in/
+src/**/[Oo]bj/
 
-# SQLite Database bestanden
+# --- Gebruikersspecifieke instellingen (VS Code / VS) ---
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- Databases (SQLite & Tijdelijke bestanden) ---
 *.db
+*.db-journal
 *.db-shm
 *.db-wal
+# Specifieke uitsluiting voor uw governance database
+src/Adapters/API/governance.db
 
-# Gebruikersspecifieke bestanden (IDE)
-*.user
-
-# Lokale configuratiebestanden (voorkomt per ongeluk committen van secrets)
-appsettings.Development.json
-appsettings.local.json
+# --- Applicatie Configuraties met Secrets ---
+src/Adapters/API/appsettings.json
