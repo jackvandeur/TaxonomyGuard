@@ -29,7 +29,7 @@ public class TenantAuditResult
 
             // Simpele weging: aftrek op basis van het percentage velden met naamgevingsfouten
             double driftPercentage = (double)FieldsWithNamingDrift / totalFields * 100;
-            return Math.Max(0, 100 - driftPercentage);
+            return Math.Round(Math.Max(0, 100 - driftPercentage), 2);
         }
     }
 }

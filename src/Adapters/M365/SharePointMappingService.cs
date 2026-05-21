@@ -1,10 +1,43 @@
 using EnterpriseGovernance.Core.Domain;
 using PnP.Core.Model.SharePoint;
+using PnP.Core.QueryModel;
 
 namespace EnterpriseGovernance.Adapters.M365;
 
 public class SharePointMappingService
 {
+    /// <summary>
+    /// Vertaalt een complete SharePoint Web weergave naar een TenantAuditResult.
+    /// </summary>
+    public TenantAuditResult MapToDomain(string tenantId, IWeb web)
+    {
+        var auditResult = new TenantAuditResult
+        {
+            TenantId = tenantId,
+            ScanDateTime = DateTime.UtcNow
+        };
+
+        // Loop door alle opgevraagde content types
+        if (web.IsPropertyAvailable(w => w.ContentTypes))
+        {
+            foreach (var pnpContentType in web.ContentTypes.AsRequested())
+            {
+                auditResult.DetectedContentTypes.Add(MapToDomain(pnpContentType));
+            }
+        }
+
+        // Loop door alle opgevraagde site-kolommen (fields)
+        if (web.IsPropertyAvailable(w => w.Fields))
+        {
+            foreach (var pnpField in web.Fields.AsRequested())
+            {
+                auditResult.DetectedGlobalFields.Add(MapFieldToDomain(pnpField));
+            }
+        }
+
+        return auditResult;
+    }
+
     /// <summary>
     /// Vertaalt een PnP Core IContentType naar ons eigen Core Domeinmodel.
     /// </summary>
@@ -15,18 +48,20 @@ public class SharePointMappingService
             Id = pnpContentType.Id,
             Name = pnpContentType.Name,
             Group = pnpContentType.Group,
-            IsActiveInTenant = true // Dit configureren we later via de database-indexering
+            IsActiveInTenant = true
         };
 
-        // Loop door de kolommen (fields) die aan dit contenttype gekoppeld zijn
-        foreach (var pnpField in pnpContentType.Fields)
+        // Defensieve check toegevoegd: controleer of de velden-property daadwerkelijk is geladen
+        if (pnpContentType.IsPropertyAvailable(c => c.Fields))
         {
-            domainContentType.Fields.Add(MapFieldToDomain(pnpField));
+            foreach (var pnpField in pnpContentType.Fields)
+            {
+                domainContentType.Fields.Add(MapFieldToDomain(pnpField));
+            }
         }
 
         return domainContentType;
     }
-
     /// <summary>
     /// Vertaalt een individueel PnP Core IField naar ons eigen Core Field model.
     /// </summary>

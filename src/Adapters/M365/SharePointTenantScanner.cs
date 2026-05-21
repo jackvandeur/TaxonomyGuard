@@ -1,5 +1,9 @@
+using System;
+using System.Security.Cryptography.X509Certificates;
+using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
 using EnterpriseGovernance.Core.Domain;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -29,41 +33,69 @@ public class SharePointTenantScanner
 
     public async Task<TenantAuditResult> ScanSiteAsync(string tenantId, Uri siteUrl)
     {
-        var auditResult = new TenantAuditResult
-        {
-            TenantId = tenantId,
-            ScanDateTime = DateTime.UtcNow
-        };
+        _logger.LogInformation("Start SharePoint governance scan voor site: {SiteUrl}", siteUrl);
 
         try
         {
-            _logger.LogInformation("Start live token generatie via Azure.Identity voor {SiteUrl}", siteUrl);
-
-            // 1. Haal de credentials op uit de configuratie
+            // 1. Configuratiewaarden ophalen
             var spConfig = _configuration.GetSection("SharePoint");
-            var azureTenantId = spConfig["TenantId"] ?? string.Empty;
-            var clientId = spConfig["ClientId"] ?? string.Empty;
-            var clientSecret = spConfig["ClientSecret"] ?? string.Empty;
+            var azureTenantId = spConfig["TenantId"] ?? throw new InvalidOperationException("TenantId ontbreekt in configuratie.");
+            var clientId = spConfig["ClientId"] ?? throw new InvalidOperationException("ClientId ontbreekt in configuratie.");
+            var vaultUrl = spConfig["KeyVaultUrl"] ?? throw new InvalidOperationException("KeyVaultUrl ontbreekt in configuratie.");
+            var certificateName = spConfig["CertificateName"] ?? throw new InvalidOperationException("CertificateName ontbreekt in configuratie.");
 
-            // 2. Verkrijg het token via Azure.Identity
-            var credential = new ClientSecretCredential(azureTenantId, clientId, clientSecret);
+            _logger.LogInformation("In-memory certificaat {CertName} ophalen uit {VaultUrl} via DefaultAzureCredential...", certificateName, vaultUrl);
+
+            // 2. Initialiseer Azure credentials met uitsluiting van corrupte lokale VS-sessies
+            var credentialOptions = new DefaultAzureCredentialOptions
+            {
+                ExcludeVisualStudioCredential = true,
+                ExcludeVisualStudioCodeCredential = true
+            };
+            var azureCredential = new DefaultAzureCredential(credentialOptions);
+            var secretClient = new SecretClient(new Uri(vaultUrl), azureCredential);
+
+            // 3. Haal het certificaat op als Secret (bevat de Private Key)
+            KeyVaultSecret secret = await secretClient.GetSecretAsync(certificateName);
+
+            // Key Vault slaat PFX certificaten op als Base64 gecodeerde strings
+            byte[] privateKeyBytes = Convert.FromBase64String(secret.Value);
+
+            // Moderne .NET 9 methode voor in-memory PKCS12 (PFX) laadacties
+            using var certificate = X509CertificateLoader.LoadPkcs12(
+                privateKeyBytes,
+                string.Empty,
+                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+
+            _logger.LogInformation("Certificaat succesvol geladen in geheugen. Token aanvragen bij Entra ID...");
+
+            // 4. Genereer het SharePoint specifieke App-Only token via het certificaat
+            var spCredential = new ClientCertificateCredential(azureTenantId, clientId, certificate);
             var tokenContext = new TokenRequestContext(new[] { $"{siteUrl.Scheme}://{siteUrl.Host}/.default" });
-            var tokenResult = await credential.GetTokenAsync(tokenContext);
+            var tokenResult = await spCredential.GetTokenAsync(tokenContext);
 
-            // 3. Maak onze custom provider aan met het live token
+            // 5. Injecteer het token in de PnP Core Context
             var authProvider = new SimpleTokenProvider(tokenResult.Token);
-
-            // 4. Open de context via de standaard factory methode die gegarandeerd bestaat
             using var context = await _pnpContextFactory.CreateAsync(siteUrl, authProvider);
 
-            _logger.LogInformation("Verbinding met SharePoint geslaagd. Starten van metadata ophalen...");
+            _logger.LogInformation("Verbinding met SharePoint geslaagd. Metadata-query opstarten...");
 
-            // 5. Haal de contenttypes en kolommen op
-            await context.Web.LoadAsync(w => w.ContentTypes.QueryProperties(
-                ct => ct.Id,
-                ct => ct.Name,
-                ct => ct.Group,
-                ct => ct.Fields.QueryProperties(
+            // 6. Voer de diepe metadata-query uit via de formele PnP Core expressie-syntax
+            await context.Web.LoadAsync(
+                w => w.ContentTypes.QueryProperties(
+                    c => c.Id,
+                    c => c.Name,
+                    c => c.Group,
+                    c => c.Fields.QueryProperties(
+                        f => f.Id,
+                        f => f.InternalName,
+                        f => f.Title,
+                        f => f.TypeAsString,
+                        f => f.Sealed,
+                        f => f.Group
+                    )
+                ),
+                w => w.Fields.QueryProperties(
                     f => f.Id,
                     f => f.InternalName,
                     f => f.Title,
@@ -71,35 +103,22 @@ public class SharePointTenantScanner
                     f => f.Sealed,
                     f => f.Group
                 )
-            ));
+            );
 
-            foreach (var pnpContentType in context.Web.ContentTypes.AsRequested())
-            {
-                var domainContentType = _mappingService.MapToDomain(pnpContentType);
-                auditResult.DetectedContentTypes.Add(domainContentType);
-            }
+            var web = context.Web;
 
-            await context.Web.LoadAsync(w => w.Fields.QueryProperties(
-                f => f.Id,
-                f => f.InternalName,
-                f => f.Title,
-                f => f.TypeAsString,
-                f => f.Sealed,
-                f => f.Group
-            ));
+            _logger.LogInformation("Metadata succesvol ontvangen. Mapping naar domeinmodellen starten...");
 
-            foreach (var pnpField in context.Web.Fields.AsRequested())
-            {
-                var domainField = _mappingService.MapFieldToDomain(pnpField);
-                auditResult.DetectedGlobalFields.Add(domainField);
-            }
+            // 7. Map de data naar de zuivere Core domeinmodellen
+            var result = _mappingService.MapToDomain(tenantId, web);
+
+            _logger.LogInformation("Scan succesvol afgerond voor site {SiteUrl}. HygieneScore: {Score}%", siteUrl, result.HygieneScore);
+            return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Fout opgetreden tijdens token-generatie of SharePoint-scan.");
+            _logger.LogError(ex, "Fout opgetreden tijdens de in-memory certificaat-opvraging of de SharePoint-scan.");
             throw;
         }
-
-        return auditResult;
     }
 }

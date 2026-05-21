@@ -26,7 +26,17 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<GovernanceDbContext>(options =>
     options.UseSqlite(connectionString));
 
+// 3c. Registreer de Swagger-generator
+builder.Services.AddSwaggerGen();
+
 var app = builder.Build();
+
+// 4. Activeer Swagger UI in de Development-fase
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(); // Dit bouwt de visuele webpagina op /swagger
+}
 
 app.UseHttpsRedirection();
 app.UseAuthorization();

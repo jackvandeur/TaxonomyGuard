@@ -70,6 +70,10 @@
               "suppressParent": "All",
               "target": "Package",
               "version": "[9.0.*, )"
+            },
+            "Swashbuckle.AspNetCore": {
+              "target": "Package",
+              "version": "[6.6.*, )"
             }
           },
           "imports": [
@@ -231,6 +235,10 @@
             "Azure.Identity": {
               "target": "Package",
               "version": "[1.21.0, )"
+            },
+            "Azure.Security.KeyVault.Secrets": {
+              "target": "Package",
+              "version": "[4.11.0, )"
             },
             "PnP.Core": {
               "target": "Package",
